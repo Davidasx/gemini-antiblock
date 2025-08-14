@@ -171,8 +171,9 @@ func ProcessStreamAndRetryInternally(cfg *config.Config, initialReader io.Reader
 			}
 
 			// Line is good: forward and update state
-			isEndOfResponse := finishReason == "STOP" || finishReason == "MAX_TOKENS"
-			processedLine := RemoveDoneTokenFromLine(line, isEndOfResponse)
+			// Always attempt to remove the [done] token, as it should only appear at the very end.
+			// This is more robust than only checking on the final message.
+			processedLine := RemoveDoneTokenFromLine(line, true)
 
 			if _, err := writer.Write([]byte(processedLine + "\n\n")); err != nil {
 				return fmt.Errorf("failed to write to output stream: %w", err)
