@@ -316,9 +316,16 @@ package streaming
 
         		logger.LogInfo(fmt.Sprintf("Retry request completed. Status: %d %s", retryResponse.StatusCode, retryResponse.Status))
 
-        		if nonRetryableStatuses[retryResponse.StatusCode] {
+        		isNonRetryableClientError := nonRetryableStatuses[retryResponse.StatusCode]
+        		isServerError := retryResponse.StatusCode >= 500 && retryResponse.StatusCode < 600
+
+        		if isNonRetryableClientError || isServerError {
         			logger.LogError("=== FATAL ERROR DURING RETRY ===")
-        			logger.LogError(fmt.Sprintf("Received non-retryable status %d during retry attempt %d", retryResponse.StatusCode, consecutiveRetryCount))
+        			if isServerError {
+        				logger.LogError(fmt.Sprintf("Received fatal server error %d during retry attempt %d. Will not retry.", retryResponse.StatusCode, consecutiveRetryCount))
+        			} else {
+        				logger.LogError(fmt.Sprintf("Received non-retryable status %d during retry attempt %d. Will not retry.", retryResponse.StatusCode, consecutiveRetryCount))
+        			}
 
         			// Write SSE error from upstream
         			errorBytes, _ := io.ReadAll(retryResponse.Body)
@@ -331,7 +338,7 @@ package streaming
         				flusher.Flush()
         			}
 
-        			return fmt.Errorf("non-retryable error: %d", retryResponse.StatusCode)
+        			return fmt.Errorf("fatal error during retry: %d", retryResponse.StatusCode)
         		}
 
         		if retryResponse.StatusCode != http.StatusOK {
