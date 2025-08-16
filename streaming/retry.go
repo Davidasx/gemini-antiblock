@@ -95,6 +95,7 @@ func ProcessStreamAndRetryInternally(cfg *config.Config, initialReader io.Reader
 	swallowModeActive := false
 	consecutivePunctuationEndCount := 0
 
+
 	// Get maxOutputTokens from client request, with a default fallback
 	maxOutputChars := 65535 // Default value
 	if genConfig, ok := originalRequestBody["generationConfig"].(map[string]interface{}); ok {
@@ -103,6 +104,7 @@ func ProcessStreamAndRetryInternally(cfg *config.Config, initialReader io.Reader
 			logger.LogInfo(fmt.Sprintf("Client-specified maxOutputTokens found, character limit set to: %d", maxOutputChars))
 		}
 	}
+
 
 	logger.LogInfo(fmt.Sprintf("Starting stream processing session. Max retries: %d", cfg.MaxConsecutiveRetries))
 
@@ -236,6 +238,7 @@ func ProcessStreamAndRetryInternally(cfg *config.Config, initialReader io.Reader
 			}
 
 			// Check for total output character limit
+
 			if maxOutputChars > 0 && len(accumulatedText) >= maxOutputChars {
 				logger.LogInfo(fmt.Sprintf("Total output character limit (%d) reached. Treating as a clean exit.", maxOutputChars))
 				cleanExit = true
