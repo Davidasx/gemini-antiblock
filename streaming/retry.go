@@ -92,6 +92,7 @@ func ProcessStreamAndRetryInternally(cfg *config.Config, initialReader io.Reader
 
 	isOutputtingFormalText := false
 	swallowModeActive := false
+	consecutivePunctuationEndCount := 0
 
 	logger.LogInfo(fmt.Sprintf("Starting stream processing session. Max retries: %d", cfg.MaxConsecutiveRetries))
 
@@ -139,6 +140,34 @@ func ProcessStreamAndRetryInternally(cfg *config.Config, initialReader io.Reader
 				}
 			}
 
+			// Heuristic check for 3 consecutive punctuation ends
+			if !isThought && textChunk != "" {
+				trimmedChunk := strings.TrimSpace(textChunk)
+				if len(trimmedChunk) > 0 {
+					const punctuations = "。？！.\"?'”’"
+					lastChar := string([]rune(trimmedChunk)[len([]rune(trimmedChunk))-1])
+
+					if strings.Contains(punctuations, lastChar) {
+						consecutivePunctuationEndCount++
+						logger.LogDebug(fmt.Sprintf("Chunk ended with punctuation. Consecutive count: %d", consecutivePunctuationEndCount))
+					} else {
+						consecutivePunctuationEndCount = 0
+					}
+				} else {
+					consecutivePunctuationEndCount = 0
+				}
+			} else {
+				// Reset if it's a thought or an empty text chunk
+				consecutivePunctuationEndCount = 0
+			}
+
+			if consecutivePunctuationEndCount >= 3 {
+				logger.LogInfo("Stream ending due to 3 consecutive chunks ending with punctuation.")
+				// The current line has already been written, so we just break
+				cleanExit = true
+				break
+			}
+
 			// Retry decision logic
 			finishReason := ExtractFinishReason(line)
 			needsRetry := false
@@ -161,7 +190,8 @@ func ProcessStreamAndRetryInternally(cfg *config.Config, initialReader io.Reader
 					interruptionReason = "FINISH_EMPTY_RESPONSE"
 					needsRetry = true
 				} else if !strings.HasSuffix(trimmedText, "[done]") {
-					lastChar := trimmedText[len(trimmedText)-1:]
+					runes := []rune(trimmedText)
+					lastChar := string(runes[len(runes)-1])
 					logger.LogError(fmt.Sprintf("Finish reason 'STOP' treated as incomplete because text ends with '%s'. Triggering retry.", lastChar))
 					interruptionReason = "FINISH_INCOMPLETE"
 					needsRetry = true
@@ -193,6 +223,13 @@ func ProcessStreamAndRetryInternally(cfg *config.Config, initialReader io.Reader
 				isOutputtingFormalText = true
 				accumulatedText += textChunk
 				textInThisStream += textChunk
+			}
+
+			// Check for total output character limit
+			if len(accumulatedText) >= 65535 {
+				logger.LogInfo("Total output character limit (65535) reached. Treating as a clean exit.")
+				cleanExit = true
+				break
 			}
 
 			if finishReason == "STOP" || finishReason == "MAX_TOKENS" {

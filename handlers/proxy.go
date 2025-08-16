@@ -16,12 +16,16 @@ import (
 
 // ProxyHandler handles proxy requests to Gemini API
 type ProxyHandler struct {
-	Config *config.Config
+	Config      *config.Config
+	RateLimiter *RateLimiter
 }
 
 // NewProxyHandler creates a new proxy handler
-func NewProxyHandler(cfg *config.Config) *ProxyHandler {
-	return &ProxyHandler{Config: cfg}
+func NewProxyHandler(cfg *config.Config, rateLimiter *RateLimiter) *ProxyHandler {
+	return &ProxyHandler{
+		Config:      cfg,
+		RateLimiter: rateLimiter,
+	}
 }
 
 // BuildUpstreamHeaders builds headers for upstream requests
@@ -48,34 +52,34 @@ func (h *ProxyHandler) BuildUpstreamHeaders(reqHeaders http.Header) http.Header 
 // InjectSystemPrompt injects system prompt to ensure [done] token
 func (h *ProxyHandler) InjectSystemPrompt(body map[string]interface{}) {
 	newSystemPromptPart := map[string]interface{}{
-		"text": "Your message must end with [done] to signify the end of your output.",
+		"text": "IMPORTANT: At the very end of your entire response, you must write the token [done] to signal completion. This is a mandatory technical requirement.",
 	}
 
-	// Case 1: systemInstruction field is missing or null
-	if _, exists := body["systemInstruction"]; !exists {
-		body["systemInstruction"] = map[string]interface{}{
+	// Case 1: system_instruction field is missing or null
+	if _, exists := body["system_instruction"]; !exists {
+		body["system_instruction"] = map[string]interface{}{
 			"parts": []interface{}{newSystemPromptPart},
 		}
 		return
 	}
 
-	systemInstruction, ok := body["systemInstruction"].(map[string]interface{})
+	system_instruction, ok := body["system_instruction"].(map[string]interface{})
 	if !ok {
-		body["systemInstruction"] = map[string]interface{}{
+		body["system_instruction"] = map[string]interface{}{
 			"parts": []interface{}{newSystemPromptPart},
 		}
 		return
 	}
 
-	// Case 2: systemInstruction exists, but parts array is missing, null, or not an array
-	parts, ok := systemInstruction["parts"].([]interface{})
+	// Case 2: system_instruction exists, but parts array is missing, null, or not an array
+	parts, ok := system_instruction["parts"].([]interface{})
 	if !ok {
-		systemInstruction["parts"] = []interface{}{newSystemPromptPart}
+		system_instruction["parts"] = []interface{}{newSystemPromptPart}
 		return
 	}
 
-	// Case 3: systemInstruction and parts array both exist - append to existing array
-	systemInstruction["parts"] = append(parts, newSystemPromptPart)
+	// Case 3: system_instruction and parts array both exist - append to existing array
+	system_instruction["parts"] = append(parts, newSystemPromptPart)
 }
 
 // HandleStreamingPost handles streaming POST requests
@@ -284,6 +288,21 @@ func (h *ProxyHandler) HandleNonStreaming(w http.ResponseWriter, r *http.Request
 
 // ServeHTTP implements the http.Handler interface
 func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// First, enforce rate limiting if a key is present.
+	apiKey := r.Header.Get("X-Goog-Api-Key")
+	if apiKey == "" {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			apiKey = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+
+	if apiKey != "" {
+		logger.LogDebug("Enforcing rate limit for key ending with: ...", apiKey[len(apiKey)-4:])
+		h.RateLimiter.Wait(apiKey)
+		logger.LogDebug("Rate limit check passed for key.")
+	}
+
 	logger.LogInfo("=== WORKER REQUEST ===")
 	logger.LogInfo("Method:", r.Method)
 	logger.LogInfo("URL:", r.URL.String())
