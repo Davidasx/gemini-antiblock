@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -93,6 +94,15 @@ func ProcessStreamAndRetryInternally(cfg *config.Config, initialReader io.Reader
 	isOutputtingFormalText := false
 	swallowModeActive := false
 	consecutivePunctuationEndCount := 0
+
+	// Get maxOutputTokens from client request, with a default fallback
+	maxOutputChars := 65535 // Default value
+	if genConfig, ok := originalRequestBody["generationConfig"].(map[string]interface{}); ok {
+		if maxTokens, ok := genConfig["maxOutputTokens"].(float64); ok && maxTokens > 0 {
+			maxOutputChars = int(maxTokens)
+			logger.LogInfo(fmt.Sprintf("Client-specified maxOutputTokens found, character limit set to: %d", maxOutputChars))
+		}
+	}
 
 	logger.LogInfo(fmt.Sprintf("Starting stream processing session. Max retries: %d", cfg.MaxConsecutiveRetries))
 
@@ -226,8 +236,8 @@ func ProcessStreamAndRetryInternally(cfg *config.Config, initialReader io.Reader
 			}
 
 			// Check for total output character limit
-			if len(accumulatedText) >= 65535 {
-				logger.LogInfo("Total output character limit (65535) reached. Treating as a clean exit.")
+			if maxOutputChars > 0 && len(accumulatedText) >= maxOutputChars {
+				logger.LogInfo(fmt.Sprintf("Total output character limit (%d) reached. Treating as a clean exit.", maxOutputChars))
 				cleanExit = true
 				break
 			}
@@ -305,6 +315,16 @@ func ProcessStreamAndRetryInternally(cfg *config.Config, initialReader io.Reader
 
 		// Build retry request
 		retryBody := BuildRetryRequestBody(originalRequestBody, accumulatedText)
+		
+		// Log the retry request body for debugging
+		prettyBodyBytes, _ := json.MarshalIndent(retryBody, "  ", "  ")
+		f, err := os.OpenFile("debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err == nil {
+			f.WriteString("\n--- RETRY REQUEST ---")
+			f.Write(prettyBodyBytes)
+			f.Close()
+		}
+
 		retryBodyBytes, err := json.Marshal(retryBody)
 		if err != nil {
 			logger.LogError("Failed to marshal retry body:", err)
