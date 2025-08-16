@@ -49,37 +49,69 @@ func (h *ProxyHandler) BuildUpstreamHeaders(reqHeaders http.Header) http.Header 
 	return headers
 }
 
-// InjectSystemPrompt injects system prompt to ensure [done] token
+// InjectSystemPrompt injects a system prompt to ensure the [done] token is present.
+// It intelligently handles both system_instruction (snake_case) and systemInstructions (camelCase)
+// by merging the content of systemInstructions into system_instruction before processing.
 func (h *ProxyHandler) InjectSystemPrompt(body map[string]interface{}) {
 	newSystemPromptPart := map[string]interface{}{
 		"text": "IMPORTANT: At the very end of your entire response, you must write the token [done] to signal completion. This is a mandatory technical requirement.",
 	}
 
-	// Case 1: system_instruction field is missing or null
-	if _, exists := body["system_instruction"]; !exists {
+	// Standardize: If systemInstructions exists, merge its content into system_instruction.
+	if camelVal, camelExists := body["systemInstructions"]; camelExists {
+		// Ensure snake_case map exists
+		snakeMap, _ := body["system_instruction"].(map[string]interface{})
+		if snakeMap == nil {
+			snakeMap = make(map[string]interface{})
+		}
+
+		// Ensure snake_case parts array exists
+		snakeParts, _ := snakeMap["parts"].([]interface{})
+		if snakeParts == nil {
+			snakeParts = make([]interface{}, 0)
+		}
+
+		// If camelCase is a valid map with its own parts, prepend them to snake_case parts
+		if camelMap, camelOk := camelVal.(map[string]interface{}); camelOk {
+			if camelParts, camelPartsOk := camelMap["parts"].([]interface{}); camelPartsOk {
+				snakeParts = append(camelParts, snakeParts...)
+			}
+		}
+
+		// Update the snake_case field with the merged parts and delete the camelCase one
+		snakeMap["parts"] = snakeParts
+		body["system_instruction"] = snakeMap
+		delete(body, "systemInstructions")
+	}
+
+	// --- From this point on, we only need to deal with system_instruction --- 
+
+	// Case 1: system_instruction field is missing or null. Create it.
+	if val, exists := body["system_instruction"]; !exists || val == nil {
 		body["system_instruction"] = map[string]interface{}{
 			"parts": []interface{}{newSystemPromptPart},
 		}
 		return
 	}
 
-	system_instruction, ok := body["system_instruction"].(map[string]interface{})
+	instruction, ok := body["system_instruction"].(map[string]interface{})
 	if !ok {
+		// The field exists but is of the wrong type. Overwrite it.
 		body["system_instruction"] = map[string]interface{}{
 			"parts": []interface{}{newSystemPromptPart},
 		}
 		return
 	}
 
-	// Case 2: system_instruction exists, but parts array is missing, null, or not an array
-	parts, ok := system_instruction["parts"].([]interface{})
+	// Case 2: The instruction field exists, but its 'parts' array is missing, null, or not an array.
+	parts, ok := instruction["parts"].([]interface{})
 	if !ok {
-		system_instruction["parts"] = []interface{}{newSystemPromptPart}
+		instruction["parts"] = []interface{}{newSystemPromptPart}
 		return
 	}
 
-	// Case 3: system_instruction and parts array both exist - append to existing array
-	system_instruction["parts"] = append(parts, newSystemPromptPart)
+	// Case 3: The instruction field and its 'parts' array both exist. Append to the existing array.
+	instruction["parts"] = append(parts, newSystemPromptPart)
 }
 
 // HandleStreamingPost handles streaming POST requests
@@ -288,19 +320,21 @@ func (h *ProxyHandler) HandleNonStreaming(w http.ResponseWriter, r *http.Request
 
 // ServeHTTP implements the http.Handler interface
 func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// First, enforce rate limiting if a key is present.
-	apiKey := r.Header.Get("X-Goog-Api-Key")
-	if apiKey == "" {
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			apiKey = strings.TrimPrefix(authHeader, "Bearer ")
+	// First, enforce rate limiting if enabled and a key is present.
+	if h.Config.EnableRateLimit {
+		apiKey := r.Header.Get("X-Goog-Api-Key")
+		if apiKey == "" {
+			authHeader := r.Header.Get("Authorization")
+			if strings.HasPrefix(authHeader, "Bearer ") {
+				apiKey = strings.TrimPrefix(authHeader, "Bearer ")
+			}
 		}
-	}
 
-	if apiKey != "" {
-		logger.LogDebug("Enforcing rate limit for key ending with: ...", apiKey[len(apiKey)-4:])
-		h.RateLimiter.Wait(apiKey)
-		logger.LogDebug("Rate limit check passed for key.")
+		if apiKey != "" {
+			logger.LogDebug("Enforcing rate limit for key ending with: ...", apiKey[len(apiKey)-4:])
+			h.RateLimiter.Wait(apiKey)
+			logger.LogDebug("Rate limit check passed for key.")
+		}
 	}
 
 	logger.LogInfo("=== WORKER REQUEST ===")

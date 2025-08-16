@@ -38,7 +38,9 @@ func main() {
 	// Create rate limiter from config
 	rateLimitWindow := time.Duration(cfg.RateLimitWindowSeconds) * time.Second
 	rateLimiter := handlers.NewRateLimiter(cfg.RateLimitCount, rateLimitWindow)
-	logger.LogInfo(fmt.Sprintf("Rate limiting enabled: %d requests per %v per key", cfg.RateLimitCount, rateLimitWindow))
+	if cfg.EnableRateLimit {
+		logger.LogInfo(fmt.Sprintf("Rate limiting enabled: %d requests per %v per key", cfg.RateLimitCount, rateLimitWindow))
+	}
 
 	// Create proxy handler
 	proxyHandler := handlers.NewProxyHandler(cfg, rateLimiter)

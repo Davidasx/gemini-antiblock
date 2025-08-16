@@ -14,6 +14,7 @@ type Config struct {
 	RetryDelayMs              time.Duration
 	SwallowThoughtsAfterRetry bool
 	Port                      string
+	EnableRateLimit           bool
 	RateLimitCount            int
 	RateLimitWindowSeconds    int
 }
@@ -27,7 +28,8 @@ func LoadConfig() *Config {
 		RetryDelayMs:              time.Duration(getEnvInt("RETRY_DELAY_MS", 750)) * time.Millisecond,
 		SwallowThoughtsAfterRetry: getEnvBool("SWALLOW_THOUGHTS_AFTER_RETRY", true),
 		Port:                      getEnvString("PORT", "8080"),
-		RateLimitCount:            getEnvInt("RATE_LIMIT_COUNT", 3),
+		EnableRateLimit:           getEnvBool("ENABLE_RATE_LIMIT", false),
+		RateLimitCount:            getEnvInt("RATE_LIMIT_COUNT", 10),
 		RateLimitWindowSeconds:    getEnvInt("RATE_LIMIT_WINDOW_SECONDS", 60),
 	}
 }
